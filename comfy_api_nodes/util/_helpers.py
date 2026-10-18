@@ -103,6 +103,8 @@ async def _request_partner_token_renewal(lineage: str, sid: str, token: str) -> 
         retry_delays = ()
     deadline = time.monotonic() + 30.0
     for retry_delay in (*retry_delays, None):
+        if is_processing_interrupted():
+            return None
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=max(deadline - time.monotonic(), 1.0))) as session:
                 async with session.post(url, headers={"Authorization": f"Bearer {token}"}) as resp:
@@ -153,11 +155,12 @@ async def _renew_partner_token(token: str, claims: dict) -> str | None:
         task.add_done_callback(
             lambda t: _partner_token_renewals.pop(lineage, None) if _partner_token_renewals.get(lineage) is t else None
         )
-    while not task.done():
+    while True:
         if is_processing_interrupted():
             raise ProcessingInterrupted("Task cancelled")
+        if task.done():
+            return task.result()
         await asyncio.wait({task}, timeout=1.0)
-    return task.result()
 
 
 async def refresh_partner_token(node_cls: type[IO.ComfyNode]) -> None:
